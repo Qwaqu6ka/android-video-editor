@@ -1,3 +1,13 @@
 <resources>
     <string name="app_name">VideoEditor</string>
+    <string name="pick_video_button">Выбрать видео</string>
+    <string name="storage_permission_rationale">Для выбора видео необходимо предоставить доступ к хранилищу</string>
+    <string name="permission_required">Необходимо разрешение</string>
+    <string name="allow">Разрешить</string>
+    <string name="cancel">Отмена</string>
+    <string name="settings">Настройки</string>
+    <string name="permission_denied_dialog_message">Вы можете установить разрешение в настройках</string>
+    <string name="pick_audio_button">Выбрать аудио</string>
+    <string name="save">Сохранить</string>
+    <string name="welcome_text">Добро пожаловать в мой видеоредактор! \n\n Здесь вы сможете наложить цветные фильтры на ваше видео, а также изменить его аудиоряд.</string>
 </resources>
