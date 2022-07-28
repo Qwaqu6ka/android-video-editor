@@ -6,7 +6,8 @@ import android.net.Uri
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
+import android.view.View
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
@@ -21,12 +22,11 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        binding.pickVideoButton.setOnClickListener {
-            pickVideo()
-        }
+        binding.pickVideoButton.setOnClickListener(pickVideo())
+        binding.clearCacheButton.setOnClickListener(clearAllCache())
     }
 
-    private fun pickVideo() {
+    private fun pickVideo() = View.OnClickListener {
         storagePermissionLauncher.launch(
             arrayOf(
                 Manifest.permission.READ_EXTERNAL_STORAGE,
@@ -49,7 +49,7 @@ class MainActivity : AppCompatActivity() {
 
     private val chooseVideoLauncher =
         registerForActivityResult(ActivityResultContracts.GetContent()) {
-            val intent = PlayerActivity.newIntent(this@MainActivity, it)
+            val intent = PlayerActivity.newPlayerIntent(this@MainActivity, it)
             startActivity(intent)
         }
 
@@ -80,5 +80,12 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton(R.string.cancel) { _, _ -> }
             .show()
+    }
+
+    private fun clearAllCache() = View.OnClickListener {
+        if (cacheDir.deleteRecursively())
+            Toast.makeText(this, "Кэш успешно очищен!", Toast.LENGTH_SHORT).show()
+        else
+            Toast.makeText(this, "Не удалось очистить кэш", Toast.LENGTH_SHORT).show()
     }
 }
