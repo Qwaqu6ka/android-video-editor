@@ -49,8 +49,10 @@ class MainActivity : AppCompatActivity() {
 
     private val chooseVideoLauncher =
         registerForActivityResult(ActivityResultContracts.GetContent()) {
-            val intent = PlayerActivity.newPlayerIntent(this@MainActivity, it)
-            startActivity(intent)
+            if (it != null) {
+                val intent = PlayerActivity.newPlayerIntent(this@MainActivity, it)
+                startActivity(intent)
+            }
         }
 
     private fun showPermissionDeniedDialog() {

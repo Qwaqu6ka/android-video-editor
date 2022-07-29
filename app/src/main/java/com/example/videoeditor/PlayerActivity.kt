@@ -7,16 +7,17 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.util.Log
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.arthenica.mobileffmpeg.Config.RETURN_CODE_CANCEL
 import com.arthenica.mobileffmpeg.Config.RETURN_CODE_SUCCESS
 import com.arthenica.mobileffmpeg.ExecuteCallback
-import com.arthenica.mobileffmpeg.FFmpeg
 import com.example.videoeditor.databinding.ActivityPlayerBinding
 import com.google.android.exoplayer2.C
 import com.google.android.exoplayer2.ExoPlayer
@@ -24,7 +25,6 @@ import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.Player
 import com.google.android.exoplayer2.source.DefaultMediaSourceFactory
 import com.google.android.exoplayer2.source.ProgressiveMediaSource
-import com.google.android.exoplayer2.trackselection.TrackSelectionParameters
 import com.google.android.exoplayer2.ui.StyledPlayerView
 import com.google.android.exoplayer2.upstream.DataSource
 import com.google.android.exoplayer2.upstream.DefaultDataSource
@@ -36,15 +36,6 @@ private const val MAIN_FOLDER_NAME = "Rome4VideoEditor"
 private const val EXTRA_VIDEO_URI = "com.example.videoeditor.video_uri"
 private const val AUDIO_CODE = 1
 private const val VIDEO_CODE = 2
-
-// Saved instance state keys.
-private const val KEY_IS_SAVING_VIDEO = "com.example.videoeditor.is_saving_video"
-private const val KEY_VIDEO_URI = "com.example.videoeditor.video_uri"
-private const val KEY_ITEM_INDEX = "com.example.videoeditor.item_index"
-private const val KEY_POSITION = "com.example.videoeditor.position"
-private const val KEY_AUTO_PLAY = "com.example.videoeditor.auto_play"
-private const val KEY_TRACK_SELECTION_PARAMETERS =
-    "com.example.videoeditor.track_selection_parameters"
 
 class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilityListener {
 
@@ -58,50 +49,35 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
 
     private lateinit var player: ExoPlayer
     private lateinit var binding: ActivityPlayerBinding
-    private lateinit var videoUri: Uri
-    private lateinit var trackSelectionParameters: TrackSelectionParameters
-    private var startAutoPlay = false
-    private var startItemIndex = 0
-    private var startPosition: Long = 0L
-    private var isSavingVideo = false
+    private lateinit var viewModelLink: PlayerViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.d("debug", "onCreate")
         binding = ActivityPlayerBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        val model: PlayerViewModel by viewModels()
+        viewModelLink = model
+        viewModelLink.videoUri = intent.getParcelableExtra(EXTRA_VIDEO_URI)!!
 
         binding.playerView.setControllerVisibilityListener(this)
         binding.playerView.requestFocus()
         binding.pickVideoButton.setOnClickListener(pickVideo())
         binding.pickAudioButton.setOnClickListener(pickAudio())
         binding.saveVideoButton.setOnClickListener(saveVideo())
+    }
 
-        if (savedInstanceState != null) {
-            videoUri = savedInstanceState.getParcelable(KEY_VIDEO_URI)!!
-            startAutoPlay = savedInstanceState.getBoolean(KEY_AUTO_PLAY)
-            startItemIndex = savedInstanceState.getInt(KEY_ITEM_INDEX)
-            startPosition = savedInstanceState.getLong(KEY_POSITION)
-            isSavingVideo = savedInstanceState.getBoolean(KEY_IS_SAVING_VIDEO)
-            trackSelectionParameters = TrackSelectionParameters.fromBundle(
-                savedInstanceState.getBundle(KEY_TRACK_SELECTION_PARAMETERS)!!
-            )
-        } else {
-            videoUri = intent.getParcelableExtra(EXTRA_VIDEO_URI)!!
-            trackSelectionParameters = TrackSelectionParameters.Builder(this).build()
-            clearStartPosition()
-        }
-
-        if (isSavingVideo)
-            turnOnLoadingScreen()
-        else
-            turnOffLoadingScreen()
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d("debug", "onDestroy")
     }
 
     public override fun onStart() {
         super.onStart()
+        Log.d("debug", "onStart")
         if (Util.SDK_INT > 23) {
             initializePlayer()
-            binding.playerView.onResume()
         }
     }
 
@@ -109,95 +85,80 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
         super.onResume()
         if (Util.SDK_INT <= 23) {
             initializePlayer()
-            binding.playerView.onResume()
         }
     }
 
     public override fun onPause() {
         super.onPause()
         if (Util.SDK_INT <= 23) {
-            binding.playerView.onPause()
             releasePlayer()
         }
     }
 
     public override fun onStop() {
         super.onStop()
+        Log.d("debug", "onStop")
         if (Util.SDK_INT > 23) {
-            binding.playerView.onPause()
             releasePlayer()
         }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        updateTrackSelectorParameters()
         updateStartPosition()
-        outState.putBundle(
-            KEY_TRACK_SELECTION_PARAMETERS,
-            trackSelectionParameters.toBundle()
-        )
-        outState.putParcelable(KEY_VIDEO_URI, videoUri)
-        outState.putBoolean(KEY_AUTO_PLAY, startAutoPlay)
-        outState.putInt(KEY_ITEM_INDEX, startItemIndex)
-        outState.putLong(KEY_POSITION, startPosition)
-        outState.putBoolean(KEY_IS_SAVING_VIDEO, isSavingVideo)
     }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
+        Log.d("debug", "onNewIntent ${viewModelLink.videoUri}")
         releasePlayer()
-        clearStartPosition()
+        viewModelLink.clearStartPosition()
         setIntent(intent)
+        viewModelLink.videoUri = intent?.getParcelableExtra(EXTRA_VIDEO_URI)!!
         initializePlayer()
     }
 
     private fun initializePlayer() {
+        Log.d("debug", "initPlayer ${viewModelLink.videoUri}")
         val dataSourceFactory: DataSource.Factory = DefaultDataSource.Factory(this)
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-            .createMediaSource(MediaItem.fromUri(videoUri))
+            .createMediaSource(MediaItem.fromUri(viewModelLink.videoUri))
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
         player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
-        player.trackSelectionParameters = trackSelectionParameters
-        player.playWhenReady = startAutoPlay
+        player.playWhenReady = viewModelLink.startAutoPlay
         player.repeatMode = Player.REPEAT_MODE_ONE
         binding.playerView.player = player
 
-        val haveStartPosition = startItemIndex != C.INDEX_UNSET
+        val haveStartPosition = viewModelLink.startItemIndex != C.INDEX_UNSET
         if (haveStartPosition) {
-            player.seekTo(startItemIndex, startPosition)
+            player.seekTo(viewModelLink.startItemIndex, viewModelLink.startPosition)
         }
         player.setMediaSource(mediaSource, !haveStartPosition)
+        Log.d("debug", "init: isSavingVideo == ${viewModelLink.isSavingVideo}")
+        if (viewModelLink.isSavingVideo) {
+            Log.d("debug", "turnOnLoadingScreen() from init")
+            turnOnLoadingScreen()
+        }
         player.prepare()
     }
 
     private fun releasePlayer() {
-        updateTrackSelectorParameters()
+        Log.d("debug", "releasePlayer ${viewModelLink.videoUri}")
         updateStartPosition()
         player.release()
         binding.playerView.player = null
-    }
-
-    private fun clearStartPosition() {
-        startAutoPlay = true
-        startItemIndex = C.INDEX_UNSET
-        startPosition = C.TIME_UNSET
     }
 
     override fun onVisibilityChanged(visibility: Int) {
         binding.controlsRoot.visibility = visibility
     }
 
-    private fun updateTrackSelectorParameters() {
-        trackSelectionParameters = player.trackSelectionParameters
-    }
-
     private fun updateStartPosition() {
-        startAutoPlay = player.playWhenReady
-        startItemIndex = player.currentMediaItemIndex
-        startPosition = 0L.coerceAtLeast(player.contentPosition)
+        viewModelLink.startAutoPlay = player.playWhenReady
+        viewModelLink.startItemIndex = player.currentMediaItemIndex
+        viewModelLink.startPosition = 0L.coerceAtLeast(player.contentPosition)
     }
 
     private fun pickVideo() = View.OnClickListener {
@@ -219,14 +180,16 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
     }
 
     private fun saveVideo() = View.OnClickListener {
+        Log.d("debug", "turnOnLoadingScreen() from saveVideo button")
         turnOnLoadingScreen()
         createDefaultFolderIfNeed()
         val newFileName =
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
                 .toString() + "/" + MAIN_FOLDER_NAME + "/VID" + System.currentTimeMillis() + ".mp4"
-        FFmpeg.executeAsync(
-            "-i ${videoUri.path} $newFileName",
-            saveVideoExecuteCallback{
+        viewModelLink.asyncSaveVideo(
+            viewModelLink.videoUri,
+            newFileName,
+            saveVideoExecuteCallback {
                 showToast("Видео сохранено в $newFileName", Toast.LENGTH_LONG)
             }
         )
@@ -256,8 +219,10 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
 
     private val chooseVideoLauncher =
         registerForActivityResult(ActivityResultContracts.GetContent()) {
-            val intent = newPlayerIntent(this@PlayerActivity, it)
-            startActivity(intent)
+            if (it != null) {
+                val intent = newPlayerIntent(this@PlayerActivity, it)
+                startActivity(intent)
+            }
         }
 
     private val audioStoragePermissionLauncher =
@@ -274,25 +239,30 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
 
     private val chooseAudioLauncher =
         registerForActivityResult(ActivityResultContracts.GetContent()) {
-            turnOnLoadingScreen()
-            val currentVideoPath = RealPathUtil.getRealPath(
+            if (it == null) return@registerForActivityResult
+            val videoPath = RealPathUtil.getRealPath(
                 this,
-                videoUri
+                viewModelLink.videoUri
             )
-            val currentAudioPath = RealPathUtil.getRealPath(
+            val audioPath = RealPathUtil.getRealPath(
                 this,
                 it
             )
-            val newFileName =
+            val newFilePath =
                 cacheDir.path + "/" + System.currentTimeMillis() + ".mp4"
-            FFmpeg.executeAsync(
-                "-i $currentVideoPath -i $currentAudioPath -c:v copy -map 0:v:0 -map 1:a:0 -shortest $newFileName",
+            if (videoPath == null || audioPath == null) return@registerForActivityResult
+            Log.d("debug", "turnOnLoadingScreen() from chooseAudioLauncher")
+            turnOnLoadingScreen()
+            viewModelLink.asyncSaveNewAudio(
+                videoPath,
+                audioPath,
+                newFilePath,
                 saveVideoExecuteCallback {
-                    releasePlayer()
-                    clearStartPosition()
-                    val newVideoUri = Uri.fromFile(File(newFileName))
-                    videoUri = newVideoUri!!
-                    initializePlayer()
+                    val newVideoUri = Uri.fromFile(File(newFilePath))
+                    viewModelLink.videoUri = newVideoUri
+                    val intent = newPlayerIntent(this@PlayerActivity, newVideoUri)
+                    Log.d("debug", "success callback is called ${viewModelLink.videoUri}")
+                    startActivity(intent)
                 }
             )
         }
@@ -347,16 +317,22 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
     }
 
     private fun turnOnLoadingScreen() {
-        isSavingVideo = true
+        viewModelLink.isSavingVideo = true
         binding.playerView.visibility = View.GONE
+        binding.controlsRoot.visibility = View.GONE
         binding.loadingText.visibility = View.VISIBLE
         player.playWhenReady = false
+        viewModelLink.startAutoPlay = false
+        Log.d("debug", "turnOnLoadingScreen()")
     }
 
     private fun turnOffLoadingScreen() {
-        isSavingVideo = false
+        viewModelLink.isSavingVideo = false
         binding.playerView.visibility = View.VISIBLE
         binding.loadingText.visibility = View.GONE
         player.playWhenReady = true
+        viewModelLink.startAutoPlay = true
+        Log.d("debug", "turnOffLoadingScreen()")
     }
+    // TODO: 1) Что-то не так с controls_root 2)при перевороте всё норм становится
 }
