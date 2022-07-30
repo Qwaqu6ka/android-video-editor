@@ -4,7 +4,9 @@
     <option name="filePathToZoomLevelMap">
       <map>
         <entry key="..\:/Users/Rome4/Documents/Programs/android-video-editor/app/src/main/res/layout/activity_main.xml" value="0.24547101449275363" />
-        <entry key="..\:/Users/Rome4/Documents/Programs/android-video-editor/app/src/main/res/layout/activity_player.xml" value="0.24547101449275363" />
+        <entry key="..\:/Users/Rome4/Documents/Programs/android-video-editor/app/src/main/res/layout/activity_player.xml" value="0.2" />
+        <entry key="..\:/Users/Rome4/Documents/Programs/android-video-editor/app/src/main/res/layout/color_filter_item.xml" value="0.24547101449275363" />
+        <entry key="..\:/Users/Rome4/Documents/Programs/android-video-editor/app/src/main/res/layout/filter_item.xml" value="0.24547101449275363" />
         <entry key="..\:/Users/Rome4/Documents/Programs/android-video-editor/app/src/main/res/layout/track_selection_dialog.xml" value="0.24547101449275363" />
         <entry key="app/src/main/res/layout/activity_main.xml" value="0.16354166666666667" />
       </map>

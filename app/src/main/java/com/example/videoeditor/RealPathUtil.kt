@@ -23,6 +23,7 @@ class RealPathUtil {
      */
     companion object {
         fun getRealPath(context: Context, uri: Uri): String? {
+            if (uri.scheme != "content") return uri.path
             // DocumentProvider
             if (DocumentsContract.isDocumentUri(context, uri)) {
                 // ExternalStorageProvider

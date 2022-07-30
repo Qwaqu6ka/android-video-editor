@@ -12,4 +12,5 @@
     <string name="welcome_text">Добро пожаловать в мой видеоредактор! \n\n Здесь вы сможете наложить цветные фильтры на ваше видео, а также изменить его аудиоряд.</string>
     <string name="loading_text">Загрузка…</string>
     <string name="clear_cache">Отчистить кэш</string>
+    <string name="color_filters">Цветовые фильтры</string>
 </resources>

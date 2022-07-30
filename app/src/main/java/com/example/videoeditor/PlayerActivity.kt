@@ -15,9 +15,13 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.arthenica.mobileffmpeg.Config
 import com.arthenica.mobileffmpeg.Config.RETURN_CODE_CANCEL
 import com.arthenica.mobileffmpeg.Config.RETURN_CODE_SUCCESS
 import com.arthenica.mobileffmpeg.ExecuteCallback
+import com.example.videoeditor.colorfilter.ColorFilterRecyclerAdapter
 import com.example.videoeditor.databinding.ActivityPlayerBinding
 import com.google.android.exoplayer2.C
 import com.google.android.exoplayer2.ExoPlayer
@@ -66,6 +70,11 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
         binding.pickVideoButton.setOnClickListener(pickVideo())
         binding.pickAudioButton.setOnClickListener(pickAudio())
         binding.saveVideoButton.setOnClickListener(saveVideo())
+        binding.colorFilterButton.setOnClickListener(changeColorFilterListVisibility())
+        binding.colorFilterRecycler.layoutManager =
+            LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+        binding.colorFilterRecycler.adapter =
+            ColorFilterRecyclerAdapter(viewModelLink.colorFilterList, colorFilterItemClickListener)
     }
 
     override fun onDestroy() {
@@ -118,6 +127,18 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
         initializePlayer()
     }
 
+    override fun onBackPressed() {
+        if (binding.colorFilterRecycler.visibility == View.VISIBLE)
+            binding.colorFilterRecycler.visibility = View.GONE
+        else
+            super.onBackPressed()
+    }
+
+    override fun onVisibilityChanged(visibility: Int) {
+        binding.controlsRoot.visibility = visibility
+        binding.colorFilterRecycler.visibility = View.GONE
+    }
+
     private fun initializePlayer() {
         Log.d("debug", "initPlayer ${viewModelLink.videoUri}")
         val dataSourceFactory: DataSource.Factory = DefaultDataSource.Factory(this)
@@ -151,14 +172,17 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
         binding.playerView.player = null
     }
 
-    override fun onVisibilityChanged(visibility: Int) {
-        binding.controlsRoot.visibility = visibility
-    }
-
     private fun updateStartPosition() {
         viewModelLink.startAutoPlay = player.playWhenReady
         viewModelLink.startItemIndex = player.currentMediaItemIndex
         viewModelLink.startPosition = 0L.coerceAtLeast(player.contentPosition)
+    }
+
+    private fun changeColorFilterListVisibility() = View.OnClickListener {
+        if (binding.colorFilterRecycler.visibility == View.GONE)
+            binding.colorFilterRecycler.visibility = View.VISIBLE
+        else
+            binding.colorFilterRecycler.visibility = View.GONE
     }
 
     private fun pickVideo() = View.OnClickListener {
@@ -183,14 +207,33 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
         Log.d("debug", "turnOnLoadingScreen() from saveVideo button")
         turnOnLoadingScreen()
         createDefaultFolderIfNeed()
-        val newFileName =
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
-                .toString() + "/" + MAIN_FOLDER_NAME + "/VID" + System.currentTimeMillis() + ".mp4"
+        val newFileAbsolutePath = getSavingFileNameAndDir()
         viewModelLink.asyncSaveVideo(
             viewModelLink.videoUri,
-            newFileName,
+            newFileAbsolutePath,
             saveVideoExecuteCallback {
-                showToast("Видео сохранено в $newFileName", Toast.LENGTH_LONG)
+                showToast("Видео сохранено в $newFileAbsolutePath", Toast.LENGTH_LONG)
+            }
+        )
+    }
+
+    private val colorFilterItemClickListener: (Int) -> Unit = {
+        turnOnLoadingScreen()
+        val newFileAbsolutePath = getNewTempFileNameAndDir()
+        val commandParams: String
+        viewModelLink.apply {
+            commandParams = createParamsForFilterCommand(colorFilterList[it].colorFilter)
+        }
+        viewModelLink.asyncSaveNewFilter(
+            RealPathUtil.getRealPath(this, viewModelLink.videoUri)!!,
+            newFileAbsolutePath,
+            commandParams,
+            saveVideoExecuteCallback {
+                viewModelLink.apply { currentColorFilter = colorFilterList[it].colorFilter }
+                val newVideoUri = Uri.fromFile(File(newFileAbsolutePath))
+                val intent = newPlayerIntent(this@PlayerActivity, newVideoUri)
+                Log.d("debug", "success callback is called ${viewModelLink.videoUri}")
+                startActivity(intent)
             }
         )
     }
@@ -201,7 +244,16 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
             when (returnCode) {
                 RETURN_CODE_SUCCESS -> successResultFunc()
                 RETURN_CODE_CANCEL -> showToast("Обработка отменена")
-                else -> showToast("Произошла ошибка")
+                else -> {
+                    showToast("Произошла ошибка")
+                    Log.i(
+                        Config.TAG,
+                        String.format(
+                            "Async command execution failed with returnCode=%d.",
+                            returnCode
+                        )
+                    )
+                }
             }
         }
 
@@ -248,24 +300,29 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
                 this,
                 it
             )
-            val newFilePath =
-                cacheDir.path + "/" + System.currentTimeMillis() + ".mp4"
+            val newFileAbsolutePath = getNewTempFileNameAndDir()
             if (videoPath == null || audioPath == null) return@registerForActivityResult
             Log.d("debug", "turnOnLoadingScreen() from chooseAudioLauncher")
             turnOnLoadingScreen()
             viewModelLink.asyncSaveNewAudio(
                 videoPath,
                 audioPath,
-                newFilePath,
+                newFileAbsolutePath,
                 saveVideoExecuteCallback {
-                    val newVideoUri = Uri.fromFile(File(newFilePath))
-                    viewModelLink.videoUri = newVideoUri
+                    val newVideoUri = Uri.fromFile(File(newFileAbsolutePath))
                     val intent = newPlayerIntent(this@PlayerActivity, newVideoUri)
                     Log.d("debug", "success callback is called ${viewModelLink.videoUri}")
                     startActivity(intent)
                 }
             )
         }
+
+    private fun getSavingFileNameAndDir() =
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+            .toString() + "/" + MAIN_FOLDER_NAME + "/VID" + System.currentTimeMillis() + ".mp4"
+
+    private fun getNewTempFileNameAndDir() =
+        cacheDir.path + "/" + System.currentTimeMillis() + ".mp4"
 
     private fun showPermissionDeniedDialog() {
         AlertDialog.Builder(this)
@@ -334,5 +391,6 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
         viewModelLink.startAutoPlay = true
         Log.d("debug", "turnOffLoadingScreen()")
     }
+
     // TODO: 1) Что-то не так с controls_root 2)при перевороте всё норм становится
 }
