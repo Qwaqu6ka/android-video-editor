@@ -26,7 +26,7 @@ class ColorFilterRecyclerAdapter(
         }
     }
 
-    inner class FilterHolder(private val itemBinding: ColorFilterItemBinding) :
+    class FilterHolder(private val itemBinding: ColorFilterItemBinding) :
         RecyclerView.ViewHolder(itemBinding.root) {
 
         fun bind(item: ColorFilterItem) {

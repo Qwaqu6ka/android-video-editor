@@ -3,24 +3,18 @@ package com.example.videoeditor
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
-import android.os.Environment
 import android.provider.Settings
 import android.util.Log
 import android.view.View
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModelProvider
 import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import com.arthenica.mobileffmpeg.Config
-import com.arthenica.mobileffmpeg.Config.RETURN_CODE_CANCEL
-import com.arthenica.mobileffmpeg.Config.RETURN_CODE_SUCCESS
-import com.arthenica.mobileffmpeg.ExecuteCallback
 import com.example.videoeditor.colorfilter.ColorFilterRecyclerAdapter
 import com.example.videoeditor.databinding.ActivityPlayerBinding
 import com.google.android.exoplayer2.C
@@ -33,13 +27,10 @@ import com.google.android.exoplayer2.ui.StyledPlayerView
 import com.google.android.exoplayer2.upstream.DataSource
 import com.google.android.exoplayer2.upstream.DefaultDataSource
 import com.google.android.exoplayer2.util.Util
-import java.io.*
-
-private const val MAIN_FOLDER_NAME = "Rome4VideoEditor"
 
 private const val EXTRA_VIDEO_URI = "com.example.videoeditor.video_uri"
-private const val AUDIO_CODE = 1
-private const val VIDEO_CODE = 2
+private const val AUDIO_CONTENT_TYPE = 1
+private const val VIDEO_CONTENT_TYPE = 2
 
 class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilityListener {
 
@@ -53,7 +44,8 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
 
     private lateinit var player: ExoPlayer
     private lateinit var binding: ActivityPlayerBinding
-    private lateinit var viewModelLink: PlayerViewModel
+    private val playerViewModel: PlayerViewModel by lazy { ViewModelProvider(this)[PlayerViewModel::class.java] }
+    private lateinit var currentVideoUri: Uri
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,20 +53,35 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
         binding = ActivityPlayerBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        val model: PlayerViewModel by viewModels()
-        viewModelLink = model
-        viewModelLink.videoUri = intent.getParcelableExtra(EXTRA_VIDEO_URI)!!
+        currentVideoUri = intent.getParcelableExtra(EXTRA_VIDEO_URI)!!
+        playerViewModel.initViewModelIfNeed(currentVideoUri)
+
+        playerViewModel.videoUriLiveData.observe(this) {
+            if (it != currentVideoUri) {
+                val intent = newPlayerIntent(this@PlayerActivity, it!!)
+                startActivity(intent)
+            }
+        }
+        playerViewModel.isSavingVideoLiveData.observe(this) {
+            if (it) {
+                turnOnLoadingScreen()
+            } else
+                turnOffLoadingScreen()
+        }
 
         binding.playerView.setControllerVisibilityListener(this)
         binding.playerView.requestFocus()
-        binding.pickVideoButton.setOnClickListener(pickVideo())
-        binding.pickAudioButton.setOnClickListener(pickAudio())
-        binding.saveVideoButton.setOnClickListener(saveVideo())
+        binding.pickVideoButton.setOnClickListener { pickMediaContent(VIDEO_CONTENT_TYPE) }
+        binding.pickAudioButton.setOnClickListener { pickMediaContent(AUDIO_CONTENT_TYPE) }
+        binding.saveVideoButton.setOnClickListener { playerViewModel.asyncSaveVideo(this@PlayerActivity) }
         binding.colorFilterButton.setOnClickListener(changeColorFilterListVisibility())
         binding.colorFilterRecycler.layoutManager =
             LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
         binding.colorFilterRecycler.adapter =
-            ColorFilterRecyclerAdapter(viewModelLink.colorFilterList, colorFilterItemClickListener)
+            ColorFilterRecyclerAdapter(
+                playerViewModel.colorFilterList,
+                playerViewModel.getColorFilterItemClickListener(this@PlayerActivity)
+            )
     }
 
     override fun onDestroy() {
@@ -100,6 +107,7 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
     public override fun onPause() {
         super.onPause()
         if (Util.SDK_INT <= 23) {
+            Log.d("debug", "onPauseReleasePlayer $currentVideoUri")
             releasePlayer()
         }
     }
@@ -108,23 +116,28 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
         super.onStop()
         Log.d("debug", "onStop")
         if (Util.SDK_INT > 23) {
+            Log.d("debug", "onStopReleasePlayer $currentVideoUri")
             releasePlayer()
         }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        updateStartPosition()
+        playerViewModel.updateStartPosition(player.playWhenReady, player.contentPosition)
     }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        Log.d("debug", "onNewIntent ${viewModelLink.videoUri}")
-        releasePlayer()
-        viewModelLink.clearStartPosition()
-        setIntent(intent)
-        viewModelLink.videoUri = intent?.getParcelableExtra(EXTRA_VIDEO_URI)!!
-        initializePlayer()
+        if (haveDifferentExtras(intent, this.intent)) {
+            Log.d("debug", "onNewIntent")
+            Log.d("debug", "old intent: ${this.intent.getParcelableExtra<Uri>(EXTRA_VIDEO_URI)!!}")
+            Log.d("debug", "new intent: ${intent?.getParcelableExtra<Uri>(EXTRA_VIDEO_URI)!!}")
+            setIntent(intent)
+            releasePlayer()
+            playerViewModel.clearStartPosition()
+            currentVideoUri = this.intent.getParcelableExtra(EXTRA_VIDEO_URI)!!
+            initializePlayer()
+        }
     }
 
     override fun onBackPressed() {
@@ -140,42 +153,30 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
     }
 
     private fun initializePlayer() {
-        Log.d("debug", "initPlayer ${viewModelLink.videoUri}")
+        Log.d("debug", "initPlayer $currentVideoUri")
         val dataSourceFactory: DataSource.Factory = DefaultDataSource.Factory(this)
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-            .createMediaSource(MediaItem.fromUri(viewModelLink.videoUri))
+            .createMediaSource(MediaItem.fromUri(currentVideoUri))
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
         player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
-        player.playWhenReady = viewModelLink.startAutoPlay
+        player.playWhenReady = playerViewModel.startAutoPlay
         player.repeatMode = Player.REPEAT_MODE_ONE
         binding.playerView.player = player
 
-        val haveStartPosition = viewModelLink.startItemIndex != C.INDEX_UNSET
+        val haveStartPosition = playerViewModel.startPosition != C.TIME_UNSET
         if (haveStartPosition) {
-            player.seekTo(viewModelLink.startItemIndex, viewModelLink.startPosition)
+            player.seekTo(playerViewModel.startPosition)
         }
         player.setMediaSource(mediaSource, !haveStartPosition)
-        Log.d("debug", "init: isSavingVideo == ${viewModelLink.isSavingVideo}")
-        if (viewModelLink.isSavingVideo) {
-            Log.d("debug", "turnOnLoadingScreen() from init")
-            turnOnLoadingScreen()
-        }
         player.prepare()
     }
 
     private fun releasePlayer() {
-        Log.d("debug", "releasePlayer ${viewModelLink.videoUri}")
-        updateStartPosition()
+        playerViewModel.updateStartPosition(player.playWhenReady, player.contentPosition)
         player.release()
         binding.playerView.player = null
-    }
-
-    private fun updateStartPosition() {
-        viewModelLink.startAutoPlay = player.playWhenReady
-        viewModelLink.startItemIndex = player.currentMediaItemIndex
-        viewModelLink.startPosition = 0L.coerceAtLeast(player.contentPosition)
     }
 
     private fun changeColorFilterListVisibility() = View.OnClickListener {
@@ -185,144 +186,42 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
             binding.colorFilterRecycler.visibility = View.GONE
     }
 
-    private fun pickVideo() = View.OnClickListener {
-        videoStoragePermissionLauncher.launch(
-            arrayOf(
-                Manifest.permission.READ_EXTERNAL_STORAGE,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE
-            )
-        )
-    }
-
-    private fun pickAudio() = View.OnClickListener {
-        audioStoragePermissionLauncher.launch(
-            arrayOf(
-                Manifest.permission.READ_EXTERNAL_STORAGE,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE
-            )
-        )
-    }
-
-    private fun saveVideo() = View.OnClickListener {
-        Log.d("debug", "turnOnLoadingScreen() from saveVideo button")
-        turnOnLoadingScreen()
-        createDefaultFolderIfNeed()
-        val newFileAbsolutePath = getSavingFileNameAndDir()
-        viewModelLink.asyncSaveVideo(
-            viewModelLink.videoUri,
-            newFileAbsolutePath,
-            saveVideoExecuteCallback {
-                showToast("Видео сохранено в $newFileAbsolutePath", Toast.LENGTH_LONG)
+    private fun pickMediaContent(mediaContentType: Int) {
+        val storagePermissionStatus =
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+        if (storagePermissionStatus == PackageManager.PERMISSION_GRANTED)
+            when (mediaContentType) {
+                AUDIO_CONTENT_TYPE -> chooseAudioLauncher.launch("audio/*")
+                VIDEO_CONTENT_TYPE -> chooseVideoLauncher.launch("video/*")
             }
-        )
+        else
+            checkStoragePermissionLauncher(mediaContentType)
     }
 
-    private val colorFilterItemClickListener: (Int) -> Unit = {
-        turnOnLoadingScreen()
-        val newFileAbsolutePath = getNewTempFileNameAndDir()
-        val commandParams: String
-        viewModelLink.apply {
-            commandParams = createParamsForFilterCommand(colorFilterList[it].colorFilter)
-        }
-        viewModelLink.asyncSaveNewFilter(
-            RealPathUtil.getRealPath(this, viewModelLink.videoUri)!!,
-            newFileAbsolutePath,
-            commandParams,
-            saveVideoExecuteCallback {
-                viewModelLink.apply { currentColorFilter = colorFilterList[it].colorFilter }
-                val newVideoUri = Uri.fromFile(File(newFileAbsolutePath))
-                val intent = newPlayerIntent(this@PlayerActivity, newVideoUri)
-                Log.d("debug", "success callback is called ${viewModelLink.videoUri}")
-                startActivity(intent)
-            }
-        )
-    }
-
-    private fun saveVideoExecuteCallback(successResultFunc: () -> Unit) =
-        ExecuteCallback { _, returnCode ->
-            turnOffLoadingScreen()
-            when (returnCode) {
-                RETURN_CODE_SUCCESS -> successResultFunc()
-                RETURN_CODE_CANCEL -> showToast("Обработка отменена")
-                else -> {
-                    showToast("Произошла ошибка")
-                    Log.i(
-                        Config.TAG,
-                        String.format(
-                            "Async command execution failed with returnCode=%d.",
-                            returnCode
-                        )
-                    )
-                }
-            }
-        }
-
-    private val videoStoragePermissionLauncher =
+    private fun checkStoragePermissionLauncher(mediaContentType: Int) {
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
             val granted = permissions[Manifest.permission.READ_EXTERNAL_STORAGE] == true
             when {
                 granted -> {
-                    chooseVideoLauncher.launch("video/*")
+                    pickMediaContent(mediaContentType)
                 }
                 !shouldShowRequestPermissionRationale(Manifest.permission.READ_EXTERNAL_STORAGE) -> showPermissionDeniedDialog()
-                else -> showRationaleDialog(VIDEO_CODE)
+                else -> showRationaleDialog(mediaContentType)
             }
         }
+    }
 
     private val chooseVideoLauncher =
         registerForActivityResult(ActivityResultContracts.GetContent()) {
-            if (it != null) {
-                val intent = newPlayerIntent(this@PlayerActivity, it)
-                startActivity(intent)
-            }
-        }
-
-    private val audioStoragePermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
-            val granted = permissions[Manifest.permission.READ_EXTERNAL_STORAGE] == true
-            when {
-                granted -> {
-                    chooseAudioLauncher.launch("audio/*")
-                }
-                !shouldShowRequestPermissionRationale(Manifest.permission.READ_EXTERNAL_STORAGE) -> showPermissionDeniedDialog()
-                else -> showRationaleDialog(AUDIO_CODE)
-            }
+            if (it == null) return@registerForActivityResult
+            playerViewModel.updateVideoUri(it)
         }
 
     private val chooseAudioLauncher =
         registerForActivityResult(ActivityResultContracts.GetContent()) {
             if (it == null) return@registerForActivityResult
-            val videoPath = RealPathUtil.getRealPath(
-                this,
-                viewModelLink.videoUri
-            )
-            val audioPath = RealPathUtil.getRealPath(
-                this,
-                it
-            )
-            val newFileAbsolutePath = getNewTempFileNameAndDir()
-            if (videoPath == null || audioPath == null) return@registerForActivityResult
-            Log.d("debug", "turnOnLoadingScreen() from chooseAudioLauncher")
-            turnOnLoadingScreen()
-            viewModelLink.asyncSaveNewAudio(
-                videoPath,
-                audioPath,
-                newFileAbsolutePath,
-                saveVideoExecuteCallback {
-                    val newVideoUri = Uri.fromFile(File(newFileAbsolutePath))
-                    val intent = newPlayerIntent(this@PlayerActivity, newVideoUri)
-                    Log.d("debug", "success callback is called ${viewModelLink.videoUri}")
-                    startActivity(intent)
-                }
-            )
+            playerViewModel.asyncSaveWithNewAudio(this@PlayerActivity, it)
         }
-
-    private fun getSavingFileNameAndDir() =
-        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
-            .toString() + "/" + MAIN_FOLDER_NAME + "/VID" + System.currentTimeMillis() + ".mp4"
-
-    private fun getNewTempFileNameAndDir() =
-        cacheDir.path + "/" + System.currentTimeMillis() + ".mp4"
 
     private fun showPermissionDeniedDialog() {
         AlertDialog.Builder(this)
@@ -337,60 +236,34 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
             .show()
     }
 
-    private fun showRationaleDialog(code: Int) {
+    private fun showRationaleDialog(mediaContentType: Int) {
         AlertDialog.Builder(this)
             .setTitle(R.string.permission_required)
             .setMessage(R.string.storage_permission_rationale)
             .setPositiveButton(R.string.allow) { _, _ ->
-                if (code == AUDIO_CODE)
-                    videoStoragePermissionLauncher.launch(
-                        arrayOf(
-                            Manifest.permission.READ_EXTERNAL_STORAGE,
-                            Manifest.permission.WRITE_EXTERNAL_STORAGE
-                        )
-                    )
-                else
-                    audioStoragePermissionLauncher.launch(
-                        arrayOf(
-                            Manifest.permission.READ_EXTERNAL_STORAGE,
-                            Manifest.permission.WRITE_EXTERNAL_STORAGE
-                        )
-                    )
+                checkStoragePermissionLauncher(mediaContentType)
             }
             .setNegativeButton(R.string.cancel) { _, _ -> }
             .show()
     }
 
-    private fun createDefaultFolderIfNeed() {
-        val f = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
-                .toString() + "/" + MAIN_FOLDER_NAME
-        )
-        if (!f.exists()) f.mkdirs()
-    }
-
-    private fun showToast(message: String, length: Int = Toast.LENGTH_SHORT) {
-        Toast.makeText(this@PlayerActivity, message, length).show()
-    }
-
     private fun turnOnLoadingScreen() {
-        viewModelLink.isSavingVideo = true
         binding.playerView.visibility = View.GONE
         binding.controlsRoot.visibility = View.GONE
         binding.loadingText.visibility = View.VISIBLE
+//        binding.controlsRoot.visibility = View.GONE
+        playerViewModel.startAutoPlay = player.playWhenReady
         player.playWhenReady = false
-        viewModelLink.startAutoPlay = false
         Log.d("debug", "turnOnLoadingScreen()")
     }
 
     private fun turnOffLoadingScreen() {
-        viewModelLink.isSavingVideo = false
         binding.playerView.visibility = View.VISIBLE
         binding.loadingText.visibility = View.GONE
-        player.playWhenReady = true
-        viewModelLink.startAutoPlay = true
+        player.playWhenReady = playerViewModel.startAutoPlay
         Log.d("debug", "turnOffLoadingScreen()")
     }
 
-    // TODO: 1) Что-то не так с controls_root 2)при перевороте всё норм становится
+    private fun haveDifferentExtras(intent1: Intent?, intent2: Intent?): Boolean =
+        intent1?.getParcelableExtra<Uri>(EXTRA_VIDEO_URI)!! != intent2?.getParcelableExtra<Uri>(EXTRA_VIDEO_URI)!!
 }
