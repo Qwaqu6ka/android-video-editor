@@ -7,9 +7,10 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
 import android.view.View
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -49,49 +50,47 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.d("debug", "onCreate")
         binding = ActivityPlayerBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
         currentVideoUri = intent.getParcelableExtra(EXTRA_VIDEO_URI)!!
         playerViewModel.initViewModelIfNeed(currentVideoUri)
 
-        playerViewModel.videoUriLiveData.observe(this) {
-            if (it != currentVideoUri) {
-                val intent = newPlayerIntent(this@PlayerActivity, it!!)
-                startActivity(intent)
-            }
+        playerViewModel.changeVideoUriSingleLiveEvent.observe(this@PlayerActivity) {
+            val intent = newPlayerIntent(this@PlayerActivity, it!!)
+            startActivity(intent)
         }
-        playerViewModel.isSavingVideoLiveData.observe(this) {
+        playerViewModel.isSavingVideoLiveData.observe(this@PlayerActivity) {
             if (it) {
                 turnOnLoadingScreen()
             } else
                 turnOffLoadingScreen()
+        }
+        playerViewModel.nextToastMessageCodeSingleLiveEvent.observe(this@PlayerActivity) {
+            when (it) {
+                PlayerViewModel.SUCCESS_SAVING_TOAST_MESSAGE_CODE -> showToast(R.string.success_saving_toast)
+                PlayerViewModel.CANCEL_SAVING_TOAST_MESSAGE_CODE -> showToast(R.string.cancel_toast)
+                PlayerViewModel.ERROR_SAVING_TOAST_MESSAGE_CODE -> showToast(R.string.error_toast)
+            }
         }
 
         binding.playerView.setControllerVisibilityListener(this)
         binding.playerView.requestFocus()
         binding.pickVideoButton.setOnClickListener { pickMediaContent(VIDEO_CONTENT_TYPE) }
         binding.pickAudioButton.setOnClickListener { pickMediaContent(AUDIO_CONTENT_TYPE) }
-        binding.saveVideoButton.setOnClickListener { playerViewModel.asyncSaveVideo(this@PlayerActivity) }
+        binding.saveVideoButton.setOnClickListener { playerViewModel.asyncSaveVideo() }
         binding.colorFilterButton.setOnClickListener(changeColorFilterListVisibility())
         binding.colorFilterRecycler.layoutManager =
             LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
         binding.colorFilterRecycler.adapter =
             ColorFilterRecyclerAdapter(
                 playerViewModel.colorFilterList,
-                playerViewModel.getColorFilterItemClickListener(this@PlayerActivity)
+                playerViewModel.getColorFilterItemClickListener()
             )
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        Log.d("debug", "onDestroy")
     }
 
     public override fun onStart() {
         super.onStart()
-        Log.d("debug", "onStart")
         if (Util.SDK_INT > 23) {
             initializePlayer()
         }
@@ -107,16 +106,13 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
     public override fun onPause() {
         super.onPause()
         if (Util.SDK_INT <= 23) {
-            Log.d("debug", "onPauseReleasePlayer $currentVideoUri")
             releasePlayer()
         }
     }
 
     public override fun onStop() {
         super.onStop()
-        Log.d("debug", "onStop")
         if (Util.SDK_INT > 23) {
-            Log.d("debug", "onStopReleasePlayer $currentVideoUri")
             releasePlayer()
         }
     }
@@ -128,16 +124,11 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        if (haveDifferentExtras(intent, this.intent)) {
-            Log.d("debug", "onNewIntent")
-            Log.d("debug", "old intent: ${this.intent.getParcelableExtra<Uri>(EXTRA_VIDEO_URI)!!}")
-            Log.d("debug", "new intent: ${intent?.getParcelableExtra<Uri>(EXTRA_VIDEO_URI)!!}")
-            setIntent(intent)
-            releasePlayer()
-            playerViewModel.clearStartPosition()
-            currentVideoUri = this.intent.getParcelableExtra(EXTRA_VIDEO_URI)!!
-            initializePlayer()
-        }
+        setIntent(intent)
+        releasePlayer()
+        playerViewModel.clearStartPosition()
+        currentVideoUri = this.intent.getParcelableExtra(EXTRA_VIDEO_URI)!!
+        initializePlayer()
     }
 
     override fun onBackPressed() {
@@ -153,7 +144,6 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
     }
 
     private fun initializePlayer() {
-        Log.d("debug", "initPlayer $currentVideoUri")
         val dataSourceFactory: DataSource.Factory = DefaultDataSource.Factory(this)
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
             .createMediaSource(MediaItem.fromUri(currentVideoUri))
@@ -220,7 +210,7 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
     private val chooseAudioLauncher =
         registerForActivityResult(ActivityResultContracts.GetContent()) {
             if (it == null) return@registerForActivityResult
-            playerViewModel.asyncSaveWithNewAudio(this@PlayerActivity, it)
+            playerViewModel.asyncSaveWithNewAudio(it)
         }
 
     private fun showPermissionDeniedDialog() {
@@ -248,22 +238,21 @@ class PlayerActivity : AppCompatActivity(), StyledPlayerView.ControllerVisibilit
     }
 
     private fun turnOnLoadingScreen() {
+        if (binding.playerView.visibility == View.VISIBLE)
+            playerViewModel.startAutoPlay = player.playWhenReady
+        player.playWhenReady = false
         binding.playerView.visibility = View.GONE
         binding.controlsRoot.visibility = View.GONE
         binding.loadingText.visibility = View.VISIBLE
-//        binding.controlsRoot.visibility = View.GONE
-        playerViewModel.startAutoPlay = player.playWhenReady
-        player.playWhenReady = false
-        Log.d("debug", "turnOnLoadingScreen()")
     }
 
     private fun turnOffLoadingScreen() {
         binding.playerView.visibility = View.VISIBLE
         binding.loadingText.visibility = View.GONE
         player.playWhenReady = playerViewModel.startAutoPlay
-        Log.d("debug", "turnOffLoadingScreen()")
     }
 
-    private fun haveDifferentExtras(intent1: Intent?, intent2: Intent?): Boolean =
-        intent1?.getParcelableExtra<Uri>(EXTRA_VIDEO_URI)!! != intent2?.getParcelableExtra<Uri>(EXTRA_VIDEO_URI)!!
+    private fun showToast(@StringRes messageId: Int, length: Int = Toast.LENGTH_SHORT) {
+        Toast.makeText(this@PlayerActivity, messageId, length).show()
+    }
 }

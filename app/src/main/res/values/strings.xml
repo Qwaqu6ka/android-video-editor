@@ -13,4 +13,7 @@
     <string name="loading_text">Загрузка…</string>
     <string name="clear_cache">Отчистить кэш</string>
     <string name="color_filters">Цветовые фильтры</string>
+    <string name="error_toast">Произошла ошибка</string>
+    <string name="cancel_toast">Обработка отменена</string>
+    <string name="success_saving_toast">Видео сохранено</string>
 </resources>

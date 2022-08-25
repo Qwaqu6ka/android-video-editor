@@ -1,21 +1,17 @@
 package com.example.videoeditor
 
-import android.content.Context
 import android.net.Uri
-import android.os.Environment
-import android.util.Log
-import android.widget.Toast
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
-import com.arthenica.mobileffmpeg.Config
 import com.arthenica.mobileffmpeg.Config.RETURN_CODE_CANCEL
 import com.arthenica.mobileffmpeg.Config.RETURN_CODE_SUCCESS
 import com.arthenica.mobileffmpeg.ExecuteCallback
 import com.arthenica.mobileffmpeg.FFmpeg
 import com.example.videoeditor.colorfilter.ColorFilterList
+import com.example.videoeditor.fileutils.FileSystemUtil
+import com.example.videoeditor.fileutils.RealPathUtil
 import com.google.android.exoplayer2.C
 import java.io.File
-import java.util.*
 
 const val NO_FILTER = 0
 const val RED_FILTER = 1
@@ -25,13 +21,19 @@ const val RED_FILTER_MULTIPLIER = "1.5"
 const val GREEN_FILTER_MULTIPLIER = "1.5"
 const val BLUE_FILTER_MULTIPLIER = "1.5"
 
-private const val MAIN_FOLDER_NAME = "Rome4VideoEditor"
-
 class PlayerViewModel : ViewModel() {
-    val videoUriLiveData: MutableLiveData<Uri?> = MutableLiveData(null)
+
+    companion object {
+        const val SUCCESS_SAVING_TOAST_MESSAGE_CODE = 0
+        const val CANCEL_SAVING_TOAST_MESSAGE_CODE = 1
+        const val ERROR_SAVING_TOAST_MESSAGE_CODE = 2
+    }
+
+    val changeVideoUriSingleLiveEvent = SingleLiveEvent<Uri>()
     private val videoUri: Uri
-        get() = videoUriLiveData.value!!
+        get() = changeVideoUriSingleLiveEvent.value!!
     val isSavingVideoLiveData: MutableLiveData<Boolean> = MutableLiveData(false)
+    val nextToastMessageCodeSingleLiveEvent = SingleLiveEvent<Int>()
     var startAutoPlay = true
     var startPosition = C.TIME_UNSET
     val colorFilterList = ColorFilterList().getList()
@@ -43,12 +45,12 @@ class PlayerViewModel : ViewModel() {
     }
 
     fun initViewModelIfNeed(currentVideoUri: Uri) {
-        if (videoUriLiveData.value == null)
+        if (changeVideoUriSingleLiveEvent.value == null)
             updateVideoUri(currentVideoUri)
     }
 
     fun updateVideoUri(newUri: Uri) {
-        videoUriLiveData.value = newUri
+        changeVideoUriSingleLiveEvent.value = newUri
     }
 
     fun clearStartPosition() {
@@ -61,80 +63,63 @@ class PlayerViewModel : ViewModel() {
         this.startPosition = 0L.coerceAtLeast(startPosition)
     }
 
-    fun asyncSaveVideo(context: Context) {
+    fun asyncSaveVideo() {
         savingVideoOn()
-        createDefaultFolderIfNeed()
-        val videoPath = RealPathUtil.getRealPath(context, videoUri)
-        val newFileAbsolutePath = getSavingFileNameAndDir()
-        FFmpeg.executeAsync("-i \"$videoPath\" \"$newFileAbsolutePath\"", getExecutionCallback(context) {
-            showToast(context, "Видео сохранено в $newFileAbsolutePath", Toast.LENGTH_LONG)
+        FileSystemUtil.createDefaultFolderIfNeed()
+        val videoPath = RealPathUtil.getRealPath(videoUri)
+        val newFileAbsolutePath = FileSystemUtil.getSavingFileNameAndDir()
+        FFmpeg.executeAsync("-i \"$videoPath\" \"$newFileAbsolutePath\"", getExecutionCallback {
+            nextToastMessageCodeSingleLiveEvent.value = SUCCESS_SAVING_TOAST_MESSAGE_CODE
         })
     }
 
-    fun asyncSaveWithNewAudio(context: Context, audioUri: Uri) {
+    fun asyncSaveWithNewAudio(audioUri: Uri) {
         savingVideoOn()
-        val videoPath = RealPathUtil.getRealPath(context, videoUri)
-        val audioPath = RealPathUtil.getRealPath(context, audioUri)
-        val newFileAbsolutePath = getNewTempFileNameAndDir(context)
+        val videoPath = RealPathUtil.getRealPath(videoUri)
+        val audioPath = RealPathUtil.getRealPath(audioUri)
+        val newFileAbsolutePath = FileSystemUtil.getNewTempFileNameAndDir()
         FFmpeg.executeAsync(
             "-i \"$videoPath\" -i \"$audioPath\" -c:v copy -map 0:v:0 -map 1:a:0 -shortest \"$newFileAbsolutePath\"",
-            getExecutionCallback(context) {
+            getExecutionCallback {
                 val newVideoUri = Uri.fromFile(File(newFileAbsolutePath))
                 updateVideoUri(newVideoUri)
             }
         )
     }
-    fun getColorFilterItemClickListener(context: Context): (Int) -> Unit = {
+
+    fun getColorFilterItemClickListener(): (Int) -> Unit = {
         savingVideoOn()
-        val videoPath = RealPathUtil.getRealPath(context, videoUri)
-        val newFileAbsolutePath = getNewTempFileNameAndDir(context)
+        val videoPath = RealPathUtil.getRealPath(videoUri)
+        val newFileAbsolutePath = FileSystemUtil.getNewTempFileNameAndDir()
         val commandParams = createParamsForFilterCommand(colorFilterList[it].colorFilter)
         FFmpeg.executeAsync("-i \"$videoPath\" $commandParams \"$newFileAbsolutePath\"",
-            getExecutionCallback(context) {
+            getExecutionCallback {
                 currentColorFilter = colorFilterList[it].colorFilter
                 val newVideoUri = Uri.fromFile(File(newFileAbsolutePath))
                 updateVideoUri(newVideoUri)
             })
     }
 
-    private fun getExecutionCallback(context: Context, successFunc: () -> Unit) =
+    private fun getExecutionCallback(successFunc: () -> Unit) =
         ExecuteCallback { _, returnCode ->
-            Log.d("debug", "ExecutionCallback is called")
             savingVideoOff()
             when (returnCode) {
                 RETURN_CODE_SUCCESS -> successFunc()
-                RETURN_CODE_CANCEL -> showToast(context, "Обработка отменена")
+                RETURN_CODE_CANCEL -> nextToastMessageCodeSingleLiveEvent.value =
+                    CANCEL_SAVING_TOAST_MESSAGE_CODE
                 else -> {
-                    showToast(context, "Произошла ошибка")
-                    Log.i(
-                        Config.TAG,
-                        String.format(
-                            "Async command execution failed with returnCode=%d.",
-                            returnCode
-                        )
-                    )
+                    nextToastMessageCodeSingleLiveEvent.value = ERROR_SAVING_TOAST_MESSAGE_CODE
+//                    Log.i(
+//                        Config.TAG,
+//                        String.format(
+//                            "Async command execution failed with returnCode=%d.",
+//                            returnCode
+//                        )
+//                    )
                 }
             }
         }
 
-    private fun getSavingFileNameAndDir() =
-        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
-            .toString() + "/" + MAIN_FOLDER_NAME + "/VID" + UUID.randomUUID() + ".mp4"
-
-    private fun getNewTempFileNameAndDir(context: Context) =
-        context.cacheDir.path + "/" + UUID.randomUUID() + ".mp4"
-
-    private fun createDefaultFolderIfNeed() {
-        val file = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
-                .toString() + "/" + MAIN_FOLDER_NAME
-        )
-        if (!file.exists()) file.mkdirs()
-    }
-
-    private fun showToast(context: Context, message: String, length: Int = Toast.LENGTH_SHORT) {
-        Toast.makeText(context, message, length).show()
-    }
 
     private fun savingVideoOn() {
         isSavingVideoLiveData.value = true

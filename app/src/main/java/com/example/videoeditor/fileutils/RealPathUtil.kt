@@ -1,15 +1,13 @@
-package com.example.videoeditor
+package com.example.videoeditor.fileutils
 
 import android.content.ContentUris
 import android.content.Context
 import android.database.Cursor
 import android.net.Uri
-import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
-import androidx.annotation.RequiresApi
-
+import com.example.videoeditor.VideoEditorApplication
 
 class RealPathUtil {
     /**
@@ -17,25 +15,22 @@ class RealPathUtil {
      * Framework Documents, as well as the _data field for the MediaStore and
      * other file-based ContentProviders.
      *
-     * @param context The context.
-     * @param uri     The Uri to query.
      * @author paulburke
      */
     companion object {
-        fun getRealPath(context: Context, uri: Uri): String? {
+        fun getRealPath(uri: Uri): String? {
             if (uri.scheme != "content") return uri.path
             // DocumentProvider
-            if (DocumentsContract.isDocumentUri(context, uri)) {
+            if (DocumentsContract.isDocumentUri(VideoEditorApplication.INSTANCE, uri)) {
                 // ExternalStorageProvider
                 if (isExternalStorageDocument(uri)) {
                     val docId = DocumentsContract.getDocumentId(uri)
                     val split = docId.split(":").toTypedArray()
                     val type = split[0]
-                    if ("primary".equals(type, ignoreCase = true)) {
-                        return Environment.getExternalStorageDirectory().toString() + '/' + split[1]
-                    }
-                    else {
-                        return "/storage/" + split[0] + '/' + split[1]
+                    return if ("primary".equals(type, ignoreCase = true)) {
+                        Environment.getExternalStorageDirectory().toString() + '/' + split[1]
+                    } else {
+                        "/storage/" + split[0] + '/' + split[1]
                     }
                 } else if (isDownloadsDocument(uri)) {
                     val id = DocumentsContract.getDocumentId(uri)
@@ -43,30 +38,34 @@ class RealPathUtil {
                         Uri.parse("content://downloads/public_downloads"),
                         java.lang.Long.valueOf(id)
                     )
-                    return getDataColumn(context, contentUri, null, null)
+                    return getDataColumn(VideoEditorApplication.INSTANCE, contentUri, null, null)
                 } else if (isMediaDocument(uri)) {
                     val docId = DocumentsContract.getDocumentId(uri)
                     val split = docId.split(":").toTypedArray()
                     val type = split[0]
-                    val contentUri: Uri
-                    if ("image" == type) {
-                        contentUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                    } else if ("video" == type) {
-                        contentUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                    } else {
-                        contentUri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                    val contentUri: Uri = when (type) {
+                        "image" -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                        "video" -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                        else -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
                     }
+//                        if ("image" == type) {
+//                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+//                    } else if ("video" == type) {
+//                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+//                    } else {
+//                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+//                    }
                     val selection = "_id=?"
                     val selectionArgs = arrayOf(
                         split[1]
                     )
-                    return getDataColumn(context, contentUri, selection, selectionArgs)
+                    return getDataColumn(VideoEditorApplication.INSTANCE, contentUri, selection, selectionArgs)
                 }
             } else if ("content".equals(uri.scheme, ignoreCase = true)) {
 
                 // Return the remote address
                 return if (isGooglePhotosUri(uri)) uri.lastPathSegment else getDataColumn(
-                    context,
+                    VideoEditorApplication.INSTANCE,
                     uri,
                     null,
                     null
